@@ -1,0 +1,53 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "ASM: compile and run current file",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "nasm -f elf64 \"${file}\" -o \"/tmp/${fileBasenameNoExtension}.o\" && ld \"/tmp/${fileBasenameNoExtension}.o\" -o \"/tmp/${fileBasenameNoExtension}\" && \"/tmp/${fileBasenameNoExtension}\""
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "ASM: compile and debug current file",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "nasm -f elf64 \"${file}\" -o \"/tmp/${fileBasenameNoExtension}.o\" && ld \"/tmp/${fileBasenameNoExtension}.o\" -o \"/tmp/${fileBasenameNoExtension}\" && gdb \"/tmp/${fileBasenameNoExtension}\""
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "C++: compile and run current file",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "g++ -std=c++23 -Wall -Wextra -g \"${file}\" -o \"/tmp/${fileBasenameNoExtension}\" && \"/tmp/${fileBasenameNoExtension}\""
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "clear": true
+            }
+        }
+    ]
+}
