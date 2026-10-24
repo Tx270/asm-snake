@@ -2,9 +2,9 @@ bits 64
 
 
 section .data
-	len               equ     1250
-	board_width:      equ     50
-	board_height:     equ     25
+	board_width:      equ     30
+	board_height:     equ     15
+	len               equ     board_width * board_height
 	background_tile:  db      "."
 	head_tile:        db      "@"
 	tail_tile:        db      "#"
@@ -34,6 +34,7 @@ section .bss
 	key_buffer    	  resb    1
 	direction		  resb	  1
 	signal_action	  resb	  32
+	apple 			  resw	  1
 
 
 section .text
@@ -42,17 +43,18 @@ section .text
 
 _start:
 	mov word [rel queue], 160
-	mov word [rel queue + 2], 210
-	mov word [rel queue + 4], 260
-	mov word [rel queue + 6], 310
+	mov word [rel queue + 2], -1
+	mov word [rel queue + 4], -1
+	mov word [rel queue + 6], -1
 
 	mov word [rel queue_head], 0
 	mov word [rel queue_count], 4
 
-	mov byte [rel direction], 3
+	mov byte [rel direction], 0
 
 	call setup_term
 	call setup_signals
+	call place_apple
 
 .loop:
     call display
@@ -257,6 +259,9 @@ display:
     mov edi, r12d
     call isPresent
     lea rsi, [rel background_tile]
+	
+	cmp [rel apple], r12d
+	je .is_apple
 
     test rax, rax ; not preasent in queue means background
     jz .print_tile
@@ -271,6 +276,10 @@ display:
 
 .is_head:
     lea rsi, [rel head_tile]
+	jmp .print_tile
+
+.is_apple:
+    lea rsi, [rel apple_tile]
 
 .print_tile:
     call print
@@ -477,7 +486,14 @@ move:
     call enqueue
     test rax, rax
     jnz .quit
-
+	
+	; check apple
+	cmp r13, [rel apple]
+	jne .not_apple
+	call place_apple
+	jmp .return
+ 
+.not_apple:
     call dequeue
     jmp .return
 
@@ -491,6 +507,28 @@ move:
     add rsp, 8
     pop r13
     pop r12
+    ret
+
+
+; place_apple
+; Purpose: Randomizes the apple.
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RDI, RDX, RCX, RSI, R8, RFLAGS.
+place_apple:
+	rdrand rax
+    jnc place_apple
+	
+	xor edx, edx
+	mov ecx, 1250
+	div rcx
+
+	mov rdi, rdx
+	call isPresent
+	test rax, rax
+	jnz place_apple
+
+	mov [rel apple], rdx
     ret
 
 
