@@ -5,10 +5,12 @@ section .data
 	board_width:      equ     30
 	board_height:     equ     15
 	queue_len         equ     board_width * board_height
-	background_tile:  db      "."
+	background_tile:  db      " "
 	head_tile:        db      "@"
 	tail_tile:        db      "#"
 	apple_tile:       db      "$"
+	border_tile:      db      "|"
+	border_top_tile:  db      "="
 	new_line:         db      10
 	sleep_time: 	  dq      0 
 					  dq      250000000
@@ -275,8 +277,21 @@ display:
 	pop rcx
 	loop .pad_top
 
+	; Top border
 	mov rdi, r10
 	call print_spaces
+
+	mov rdi, board_width + 2
+	call print_border
+
+	lea rsi, [rel new_line]
+	call print
+
+	mov rdi, r10
+	call print_spaces
+	
+	lea rsi, [rel border_tile]
+    call print
 
 .loop:
     mov edi, r12d
@@ -322,16 +337,34 @@ display:
     test edx, edx
     jnz .next_row
 
+	lea rsi, [rel border_tile]
+    call print
+
     lea rsi, [rel new_line]
     call print
 
 	mov rdi, r10
 	call print_spaces
 
+	lea rsi, [rel border_tile]
+    call print
+
 .next_row:
     jmp .loop
 
 .done:
+	lea rsi, [rel border_tile]
+    call print
+
+	lea rsi, [rel new_line]
+	call print
+
+    mov rdi, r10
+    call print_spaces
+
+    mov rdi, board_width + 2
+    call print_border
+
 	pop r12
     ret
 
@@ -822,6 +855,25 @@ print_spaces:
     mov edi, 1
     lea rsi, [rel spaces_buffer]
     syscall
+
+.done:
+    ret
+
+
+; print_border
+print_border:
+    mov rcx, rdi
+    lea rsi, [rel border_top_tile]
+
+.loop:
+    test rcx, rcx
+    jz .done
+
+    push rcx
+    call print
+    pop rcx
+
+    loop .loop
 
 .done:
     ret
