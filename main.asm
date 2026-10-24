@@ -4,13 +4,16 @@ bits 64
 section .data
 	board_width:      equ     30
 	board_height:     equ     15
-	queue_len         equ     board_width * board_height
+	spaces_buffer_len equ	  300
+	board_buffer_len  equ	  4096
 	background_tile:  db      " "
 	head_tile:        db      "@"
 	tail_tile:        db      "#"
 	apple_tile:       db      "$"
 	border_tile:      db      "|"
 	border_top_tile:  db      "="
+
+	queue_len         equ     board_width * board_height
 	new_line:         db      10
 	sleep_time: 	  dq      0 
 					  dq      250000000
@@ -24,7 +27,6 @@ section .data
 	direction_down	  equ     1
 	direction_left	  equ     2
 	direction_right	  equ     3
-	spaces_buffer_len equ	  300
 
 
 section .bss
@@ -40,6 +42,7 @@ section .bss
 	apple 			  resw	  1
 	winsize 		  resb 	  8
     spaces_buffer 	  resb	  spaces_buffer_len
+	board_buffer	  resb	  board_buffer_len
 
 
 section .text
