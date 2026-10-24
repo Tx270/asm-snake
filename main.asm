@@ -2,31 +2,31 @@ bits 64
 
 
 section .data
-	board_width:      equ     30
-	board_height:     equ     15
-	spaces_buffer_len equ	  300
-	board_buffer_len  equ	  4096
-	background_tile:  db      " "
-	head_tile:        db      "@"
-	tail_tile:        db      "#"
-	apple_tile:       db      "$"
-	border_tile:      db      "|"
-	border_top_tile:  db      "="
+	board_width:        equ     30
+	board_height:       equ     15
+	background_tile:    db      " "
+	head_tile:          db      "@"
+	tail_tile:          db      "#"
+	apple_tile:         db      "$"
+	border_tile:        db      "|"
+	border_top_tile:    db      "="
+	spaces_buffer_len   equ	  	300
+	display_buffer_len  equ	  	8192
 
-	queue_len         equ     board_width * board_height
-	new_line:         db      10
-	sleep_time: 	  dq      0 
-					  dq      250000000
-	clear_screen_ansi db      27, "[2J", 27, "[H"
-	.len              equ     $ - clear_screen_ansi
-	hide_cursor_ansi  db 	  27, "[?25l"
-	.len        	  equ	  $ - hide_cursor_ansi
-	show_cursor_ansi  db   	  27, "[?25h"
-	.len        	  equ	  $ - show_cursor_ansi
-	direction_up	  equ     0
-	direction_down	  equ     1
-	direction_left	  equ     2
-	direction_right	  equ     3
+	queue_len         	equ     board_width * board_height
+	new_line:         	db      10
+	sleep_time: 	  	dq      0 
+					  	dq      250000000
+	clear_screen_ansi 	db      27, "[2J", 27, "[H"
+	.len              	equ     $ - clear_screen_ansi
+	hide_cursor_ansi  	db 	  	27, "[?25l"
+	.len        	  	equ	  	$ - hide_cursor_ansi
+	show_cursor_ansi  	db   	  27, "[?25h"
+	.len        	  	equ	  	$ - show_cursor_ansi
+	direction_up	  	equ     0
+	direction_down	  	equ     1
+	direction_left	  	equ     2
+	direction_right	  	equ     3
 
 
 section .bss
@@ -42,17 +42,55 @@ section .bss
 	apple 			  resw	  1
 	winsize 		  resb 	  8
     spaces_buffer 	  resb	  spaces_buffer_len
-	board_buffer	  resb	  board_buffer_len
+	display_buffer	  resb	  display_buffer_len
+
+
+%macro APPEND_CHAR 1
+    mov byte [r15], %1
+    inc r15
+%endmacro
+
+%macro APPEND_MEM_CHAR 1
+    mov al, [rel %1]
+    mov byte [r15], al
+    inc r15
+%endmacro
+
+%macro APPEND_REPEAT 2
+    mov al, %1
+    mov rdi, r15
+    mov rcx, %2
+    rep stosb
+    mov r15, rdi
+%endmacro
+
+%macro APPEND_REPEAT_MEM 2
+    mov al, [rel %1]
+    mov rdi, r15
+    mov rcx, %2
+    rep stosb
+    mov r15, rdi
+%endmacro
 
 
 section .text
     global _start
 
-
 _start:
-	call init
-	call main_loop
+init:
+	mov word [rel queue], 160
+	mov word [rel queue + 2], -1
+	mov word [rel queue + 4], -1
+	mov word [rel queue + 6], -1
 
+	mov word [rel queue_head], 0
+	mov word [rel queue_count], 4
+
+	mov byte [rel direction], 0
+
+	call setup_term
+	call setup_signals
+	call place_apple
 
 main_loop:
     call display
@@ -69,23 +107,6 @@ main_loop:
 	call move
 
 	jmp main_loop
-
-
-init:
-	mov word [rel queue], 160
-	mov word [rel queue + 2], -1
-	mov word [rel queue + 4], -1
-	mov word [rel queue + 6], -1
-
-	mov word [rel queue_head], 0
-	mov word [rel queue_count], 4
-
-	mov byte [rel direction], 0
-
-	call init_spaces
-	call setup_term
-	call setup_signals
-	call place_apple
 
 
 ; isEmpty
@@ -229,7 +250,7 @@ dequeue:
 ; Returns: RAX = 1 if present, 0 otherwise.
 ; Clobbers: RAX, RCX, RDX, RDI, RSI, R8, RFLAGS.
 isPresent:
-    mov rsi, rdi                    ; Preserve searched value
+    mov rsi, rdi                          ; Preserve searched value
     movzx r8d, word [rel queue_count]     ; Number of elements
     movzx edx, word [rel queue_head]      ; First queue index
 
@@ -261,128 +282,121 @@ isPresent:
 
 
 ; display
-; Purpose: Display the game board using a linear index.
+; Purpose: Display the game board, padding and borders.
 ; Arguments: None.
 ; Returns: None.
 ; Clobbers: RAX, RCX, RDX, RSI, RDI, R12.
 display:
-	call clear_screen
-	push r12
-	xor r12d, r12d
+    ; R14 = start of buffor
+    ; R15 = save pointer to be incremented
+    lea r14, [rel display_buffer]
+    mov r15, r14
 
-	call get_board_padding
-	mov rcx, r11
+    cld
+
+	call clear_screen
+
+    call get_board_padding
+    test rax, rax
+    js .error
 
 .pad_top:
-	lea rsi, [rel new_line]
-	push rcx
-	call print
-	pop rcx
-	loop .pad_top
+    test rbx, rbx
+    jz .top_border
 
-	; Top border
-	mov rdi, r10
-	call print_spaces
+    APPEND_CHAR 10
+    dec rbx
+    jmp .pad_top
 
-	mov rdi, board_width + 2
-	call print_border
+.top_border:
+    APPEND_REPEAT ' ', r13
+    APPEND_REPEAT_MEM border_top_tile, board_width + 2
+    APPEND_CHAR 10
 
-	lea rsi, [rel new_line]
-	call print
+    APPEND_REPEAT ' ', r13
 
-	mov rdi, r10
-	call print_spaces
-	
-	lea rsi, [rel border_tile]
-    call print
+    APPEND_MEM_CHAR border_tile
 
-.loop:
+    xor r12d, r12d
+
+.cell_loop:
+    ; apple?
+    cmp word [rel apple], r12w
+    je .is_apple
+
+    ; snake?
     mov edi, r12d
     call isPresent
-    lea rsi, [rel background_tile]
-	
-	cmp word [rel apple], r12w
-	je .is_apple
+    test rax, rax
+    jz .is_background
 
-    test rax, rax ; not preasent in queue means background
-    jz .print_tile
-
-	call first
-	cmp eax, r12d
-	je .is_head
+    ; head?
+    call first
+    cmp eax, r12d
+    je .is_head
 
 .is_tail:
-    lea rsi, [rel tail_tile]
-	jmp .print_tile
+    APPEND_MEM_CHAR tail_tile
+    jmp .next_cell
 
 .is_head:
-    lea rsi, [rel head_tile]
-	jmp .print_tile
+    APPEND_MEM_CHAR head_tile
+    jmp .next_cell
 
 .is_apple:
-    lea rsi, [rel apple_tile]
+    APPEND_MEM_CHAR apple_tile
+    jmp .next_cell
 
-.print_tile:
-    call print
+.is_background:
+    APPEND_MEM_CHAR background_tile
 
+.next_cell:
     inc r12d
-	; Stop after the last board cell.
-	cmp r12d, board_width * board_height
-	jae .done
 
-    ; check if next index starts new row 
-    mov eax, board_width * board_height
-    sub eax, r12d
+    ; end of board?
+    cmp r12d, board_width * board_height
+    jae .bottom_border
+
+    ; end of row?
+    mov eax, r12d
     xor edx, edx
     mov ecx, board_width
     div ecx
-
     test edx, edx
-    jnz .next_row
+    jnz .cell_loop
 
-	lea rsi, [rel border_tile]
-    call print
+    APPEND_MEM_CHAR border_tile
+    APPEND_CHAR 10
 
-    lea rsi, [rel new_line]
-    call print
+    APPEND_REPEAT ' ', r13
+    APPEND_MEM_CHAR border_tile
 
-	mov rdi, r10
-	call print_spaces
+    jmp .cell_loop
 
-	lea rsi, [rel border_tile]
-    call print
+.bottom_border:
+    APPEND_MEM_CHAR border_tile
+    APPEND_CHAR 10
 
-.next_row:
-    jmp .loop
+    APPEND_REPEAT ' ', r13
+    APPEND_REPEAT_MEM border_top_tile, board_width + 2
+    APPEND_CHAR 10
+
+	; num of bytes = end pointer - beggining
+    mov rdx, r15
+    sub rdx, r14
+
+    mov eax, 1
+    mov edi, 1
+    mov rsi, r14
+    syscall
+
+    jmp .done
+
+.error:
+	jmp quit
 
 .done:
-	lea rsi, [rel border_tile]
-    call print
-
-	lea rsi, [rel new_line]
-	call print
-
-    mov rdi, r10
-    call print_spaces
-
-    mov rdi, board_width + 2
-    call print_border
-
-	pop r12
     ret
-
-
-; print
-; Purpose: Write one byte to standard output.
-; Arguments: RSI = address of the byte to print.
-; Returns: RAX = number of bytes written, or a negative error code.
-; Clobbers: RAX, RDI, RDX, RFLAGS.
-print:
-	mov     rax, 1
-	mov     rdi, 1
-	mov     rdx, 1
-	syscall
-	ret
 
 
 ; clear_screen
@@ -799,8 +813,8 @@ signal_restorer:
 ; get_board_padding
 ; Purpose: Gets terminal dimensions and calculates needed padding
 ; Arguments: None
-; Returns: R10 = columns, R11 = rows, RAX = 0, negative error code on failure
-; Clobbers: RAX, RCX, RDX, RSI, RDI, R10, R11
+; Returns: R13 = columns, RBX = rows, RAX = 0, negative error code on failure
+; Clobbers: RAX, RCX, RDX, RSI, RDI, R13, RBX
 get_board_padding:
     mov eax, 16             ; SYS_ioctl
     mov edi, 1              ; stdout
@@ -815,85 +829,30 @@ get_board_padding:
 	xor edx, edx
 	mov ecx, 2
 	div rcx
-	mov r10, rax
+	mov r13, rax
 
 	mov eax, board_width
 	xor edx, edx
 	mov ecx, 2
 	div rcx
 
-	sub r10, rax
+	sub r13, rax
 
     movzx eax, word [rel winsize]
 	xor edx, edx
 	mov ecx, 2
 	div rcx
-	mov r11, rax
+	mov rbx, rax
 
 	mov eax, board_height
 	xor edx, edx
 	mov ecx, 2
 	div rcx
 
-	sub r11, rax
+	sub rbx, rax
 
     xor eax, eax
     ret
 
 .error:
-    ret
-
-
-; print_spaces
-; Purpose: Prints given number of spaces as padding.
-; Arguments: RDI = number of spaces (0–300)
-; Returns: None
-; Clobbers: RAX, RDI, RSI, RDX, RFLAGS
-print_spaces:
-    test rdi, rdi
-    jz .done
-
-    mov rdx, rdi
-    mov eax, 1
-    mov edi, 1
-    lea rsi, [rel spaces_buffer]
-    syscall
-
-.done:
-    ret
-
-
-; print_border
-; Purpose: Prints line of border chars.
-; Arguments: RDI = number of chars to print
-; Returns: None
-; Clobbers: RAX, RCX, RDI, RSI
-print_border:
-    mov rcx, rdi
-    lea rsi, [rel border_top_tile]
-
-.loop:
-    test rcx, rcx
-    jz .done
-
-    push rcx
-    call print
-    pop rcx
-
-    loop .loop
-
-.done:
-    ret
-
-
-; init_spaces
-; Purpose: Fills spaces_buffer for use in padding.
-; Arguments: None
-; Returns: None
-; Clobbers: RAX, RDI, RCX, RFLAGS
-init_spaces:
-    lea rdi, [rel spaces_buffer]
-    mov ecx, 300
-    mov al, ' '
-    rep stosb
     ret
