@@ -64,7 +64,8 @@ _start:
 	syscall
 
 	call read_char
-	mov rdi, rax
+	movzx rdi, al
+	call set_direction
 	call move
 
 	jmp .loop
@@ -355,90 +356,146 @@ show_cursor:
     ret
 
 
-; move
-; Purpose: Moves the snake queue. 
-; Arguments: RDI = direction [0 | 1 | 2 | 3]
+; set_direction
+; Purpose: Updates direction unless it would reverse the snake.
+; Arguments: RDI = requested direction [0 | 1 | 2 | 3]
 ; Returns: None
-; Clobbers: RAX, RDI, RCX, RSI, RFLAGS.
-move:
-    mov r12b, dil
-
+; Clobbers: RAX, RDI, RFLAGS
+set_direction:
     mov al, [rel direction]
 
-    cmp r12b, direction_up
+    cmp dil, direction_up
     jne .check_down
     cmp al, direction_down
-    je .keep_old
+    je .done
+    jmp .update
 
 .check_down:
-    cmp r12b, direction_down
+    cmp dil, direction_down
     jne .check_left
     cmp al, direction_up
-    je .keep_old
+    je .done
+    jmp .update
 
 .check_left:
-    cmp r12b, direction_left
+    cmp dil, direction_left
     jne .check_right
     cmp al, direction_right
-    je .keep_old
+    je .done
+    jmp .update
 
 .check_right:
-    cmp r12b, direction_right
-    jne .move_snake
+    cmp dil, direction_right
+    jne .done
     cmp al, direction_left
-    je .keep_old
+    je .done
 
-.move_snake:
-    mov [rel direction], r12b
-    mov r12b, [rel direction]
-    jmp .calculate
-
-.keep_old:
-    mov r12b, [rel direction]
-
-.calculate:
-    call first
-    mov rdi, rax
-
-    cmp r12b, direction_up
-    je .up
-    cmp r12b, direction_down
-    je .down
-    cmp r12b, direction_left
-    je .left
-    cmp r12b, direction_right
-    je .right
-
-    ret
-
-.up:
-    sub rdi, board_width
-    jmp .done
-
-.down:
-    add rdi, board_width
-    jmp .done
-
-.left:
-    dec rdi
-    jmp .done
-
-.right:
-    inc rdi
-    jmp .done
+.update:
+    mov [rel direction], dil
 
 .done:
+    ret
+
+
+; move
+; Purpose: Moves the snake, checking board boundaries and self-collision.
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RCX, RDX, RDI, RSI, RFLAGS
+move:
+    push r12
+    push r13
+    sub rsp, 8
+
+    call first
+    test rax, rax
+    js .quit
+
+    mov r12, rax                 ; R12 = current head position
+
+    cmp byte [rel direction], direction_up
+    je .up
+    cmp byte [rel direction], direction_down
+    je .down
+    cmp byte [rel direction], direction_left
+    je .left
+    cmp byte [rel direction], direction_right
+    je .right
+    jmp .return
+
+.up:
+    cmp r12, board_width
+    jb .quit
+    mov r13, r12
+    sub r13, board_width
+    jmp .check_collision
+
+.down:
+    cmp r12, board_width * (board_height - 1)
+    jae .quit
+    mov r13, r12
+    add r13, board_width
+    jmp .check_collision
+
+.left:
+    mov rax, r12
+    xor edx, edx
+    mov ecx, board_width
+    div ecx
+    test edx, edx
+    jz .quit
+
+    mov r13, r12
+    dec r13
+    jmp .check_collision
+
+.right:
+    mov rax, r12
+    xor edx, edx
+    mov ecx, board_width
+    div ecx
+    cmp edx, board_width - 1
+    je .quit
+
+    mov r13, r12
+    inc r13
+
+.check_collision:
+    ; allow moving into current tail position
+    call last
+    cmp rax, r13
+    je .move_snake
+
+    ; check if next position is occupied
+    mov rdi, r13
+    call isPresent
+    test rax, rax
+    jnz .quit
+
+.move_snake:
+    mov rdi, r13
     call enqueue
     test rax, rax
-    jnz .return
+    jnz .quit
+
     call dequeue
+    jmp .return
+
+.quit:
+    add rsp, 8
+    pop r13
+    pop r12
+    jmp quit
 
 .return:
+    add rsp, 8
+    pop r13
+    pop r12
     ret
 
 
 ; setup_term
-; Purpose: Saves and changes terminal settings through ioctl
+; Purpose: Saves and changes terminal settings through ioctl.
 ; Arguments: None
 ; Returns: None
 ; Clobbers: RAX, RDI, RDX, RCX, RSI, RFLAGS.
@@ -465,7 +522,7 @@ setup_term:
 	cld
 	rep     movsb
 
-    ; Wyłącz ICANON i echo (flaga w c_lflag, offset 12)
+    ; turn off ICANON and echo
 	and     dword [rel termios + 12], 0xFFFFFFF5
 
 	mov     byte [rel termios + 23], 0				; VMIN = 0
