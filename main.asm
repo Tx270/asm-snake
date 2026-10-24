@@ -4,7 +4,7 @@ bits 64
 section .data
 	board_width:      equ     30
 	board_height:     equ     15
-	len               equ     board_width * board_height
+	queue_len         equ     board_width * board_height
 	background_tile:  db      "."
 	head_tile:        db      "@"
 	tail_tile:        db      "#"
@@ -14,18 +14,19 @@ section .data
 					  dq      250000000
 	clear_screen_ansi db      27, "[2J", 27, "[H"
 	.len              equ     $ - clear_screen_ansi
-	hide_cursor_ansi  db 		27, "[?25l"
-	.len        	  equ		$ - hide_cursor_ansi
-	show_cursor_ansi  db 		27, "[?25h"
-	.len        	  equ		$ - show_cursor_ansi
+	hide_cursor_ansi  db 	  27, "[?25l"
+	.len        	  equ	  $ - hide_cursor_ansi
+	show_cursor_ansi  db   	  27, "[?25h"
+	.len        	  equ	  $ - show_cursor_ansi
 	direction_up	  equ     0
 	direction_down	  equ     1
 	direction_left	  equ     2
 	direction_right	  equ     3
+	spaces_buffer_len equ	  300
 
 
 section .bss
-	queue             resw    len
+	queue             resw    queue_len
 	queue_head        resw    1
 	queue_count       resw    1
 	saved_termios     resb    44
@@ -35,6 +36,8 @@ section .bss
 	direction		  resb	  1
 	signal_action	  resb	  32
 	apple 			  resw	  1
+	winsize 		  resb 	  8
+    spaces_buffer 	  resb	  spaces_buffer_len
 
 
 section .text
@@ -42,21 +45,11 @@ section .text
 
 
 _start:
-	mov word [rel queue], 160
-	mov word [rel queue + 2], -1
-	mov word [rel queue + 4], -1
-	mov word [rel queue + 6], -1
+	call init
+	call main_loop
 
-	mov word [rel queue_head], 0
-	mov word [rel queue_count], 4
 
-	mov byte [rel direction], 0
-
-	call setup_term
-	call setup_signals
-	call place_apple
-
-.loop:
+main_loop:
     call display
     
 	; wait
@@ -70,7 +63,24 @@ _start:
 	call set_direction
 	call move
 
-	jmp .loop
+	jmp main_loop
+
+
+init:
+	mov word [rel queue], 160
+	mov word [rel queue + 2], -1
+	mov word [rel queue + 4], -1
+	mov word [rel queue + 6], -1
+
+	mov word [rel queue_head], 0
+	mov word [rel queue_count], 4
+
+	mov byte [rel direction], 0
+
+	call init_spaces
+	call setup_term
+	call setup_signals
+	call place_apple
 
 
 ; isEmpty
@@ -91,7 +101,7 @@ isEmpty:
 ; Returns: RAX = 1 if full, 0 otherwise.
 ; Clobbers: RAX, RFLAGS.
 isFull:
-	cmp     word [rel queue_count], len
+	cmp     word [rel queue_count], queue_len
 	sete    al
 	movzx   eax, al
 	ret
@@ -143,7 +153,7 @@ last:
 	dec     rax
 
 	xor     edx, edx
-	mov     ecx, len
+	mov     ecx, queue_len
 	div     ecx
 
 	movzx   rdi, edx
@@ -170,7 +180,7 @@ enqueue:
 	cmp     word [rel queue_head], 0
 	jne     .decrement
 
-	mov     word [rel queue_head], len
+	mov     word [rel queue_head], queue_len
 	jmp     .decrement
 
 .decrement:
@@ -228,7 +238,7 @@ isPresent:
     je .present
 
     inc edx
-    cmp edx, len
+    cmp edx, queue_len
     jb .no_wrap
     xor edx, edx
 
@@ -255,12 +265,25 @@ display:
 	push r12
 	xor r12d, r12d
 
+	call get_board_padding
+	mov rcx, r11
+
+.pad_top:
+	lea rsi, [rel new_line]
+	push rcx
+	call print
+	pop rcx
+	loop .pad_top
+
+	mov rdi, r10
+	call print_spaces
+
 .loop:
     mov edi, r12d
     call isPresent
     lea rsi, [rel background_tile]
 	
-	cmp [rel apple], r12d
+	cmp word [rel apple], r12w
 	je .is_apple
 
     test rax, rax ; not preasent in queue means background
@@ -301,6 +324,9 @@ display:
 
     lea rsi, [rel new_line]
     call print
+
+	mov rdi, r10
+	call print_spaces
 
 .next_row:
     jmp .loop
@@ -488,7 +514,7 @@ move:
     jnz .quit
 	
 	; check apple
-	cmp r13, [rel apple]
+	cmp r13w, word [rel apple]
 	jne .not_apple
 	call place_apple
 	jmp .return
@@ -516,22 +542,25 @@ move:
 ; Returns: None
 ; Clobbers: RAX, RDI, RDX, RCX, RSI, R8, RFLAGS.
 place_apple:
-	rdrand rax
-    jnc place_apple
-	
-	xor edx, edx
-	mov ecx, len
-	div rcx
+    push r12
 
-	push rdx
-	mov rdi, rdx
-	call isPresent
-	test rax, rax
-	jnz place_apple
-	pop rdx
+.retry:
+    rdrand rax
+    jnc .retry
 
-cont:
-	mov [rel apple], rdx
+    xor edx, edx
+    mov ecx, board_width * board_height
+    div rcx
+
+    mov r12, rdx
+    mov rdi, r12
+    call isPresent
+
+    test rax, rax
+    jnz .retry
+
+    mov [rel apple], r12
+    pop r12
     ret
 
 
@@ -729,3 +758,83 @@ setup_signals:
 signal_restorer:
     mov eax, 15          ; rt_sigreturn
     syscall
+
+
+; get_board_padding
+; Purpose: Gets terminal dimensions and calculates needed padding
+; Arguments: None
+; Returns: R10 = columns, R11 = rows, RAX = 0, negative error code on failure
+; Clobbers: RAX, RCX, RDX, RSI, RDI, R10, R11
+get_board_padding:
+    mov eax, 16             ; SYS_ioctl
+    mov edi, 1              ; stdout
+    mov esi, 0x5413         ; TIOCGWINSZ
+    lea rdx, [rel winsize]
+    syscall
+
+    test rax, rax
+    js .error
+
+    movzx eax, word [rel winsize + 2]
+	xor edx, edx
+	mov ecx, 2
+	div rcx
+	mov r10, rax
+
+	mov eax, board_width
+	xor edx, edx
+	mov ecx, 2
+	div rcx
+
+	sub r10, rax
+
+    movzx eax, word [rel winsize]
+	xor edx, edx
+	mov ecx, 2
+	div rcx
+	mov r11, rax
+
+	mov eax, board_height
+	xor edx, edx
+	mov ecx, 2
+	div rcx
+
+	sub r11, rax
+
+    xor eax, eax
+    ret
+
+.error:
+    ret
+
+
+; print_spaces
+; Purpose: Print given number of spaces as padding.
+; Arguments: RDI = number of spaces (0–300)
+; Returns: None
+; Clobbers: RAX, RDI, RSI, RDX, RFLAGS
+print_spaces:
+    test rdi, rdi
+    jz .done
+
+    mov rdx, rdi
+    mov eax, 1
+    mov edi, 1
+    lea rsi, [rel spaces_buffer]
+    syscall
+
+.done:
+    ret
+
+
+; init_spaces
+; Purpose: Fills spaces_buffer for use in padding.
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RDI, RCX, RFLAGS
+init_spaces:
+    lea rdi, [rel spaces_buffer]
+    mov ecx, 300
+    mov al, ' '
+    rep stosb
+    ret

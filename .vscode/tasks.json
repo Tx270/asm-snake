@@ -18,6 +18,22 @@
             }
         },
         {
+            "label": "ASM: compile current file",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "nasm -f elf64 \"${file}\" -o \"/tmp/${fileBasenameNoExtension}.o\" && ld \"/tmp/${fileBasenameNoExtension}.o\" -o \"/tmp/${fileBasenameNoExtension}\""
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
             "label": "ASM: compile and debug current file",
             "type": "shell",
             "command": "bash",
