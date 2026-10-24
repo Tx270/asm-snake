@@ -7,5 +7,5 @@ display/uh &queue_head
 display/uh &queue_count
 display/u $rax
 
-break exit
+break setup_term
 run

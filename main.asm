@@ -1,5 +1,6 @@
 bits 64
 
+
 section .data
 	len               equ     1250
 	board_width:      equ     50
@@ -15,18 +16,27 @@ section .data
 	.len              equ     $ - clear_screen_ansi
 	hide_cursor_ansi  db 		27, "[?25l"
 	.len        	  equ		$ - hide_cursor_ansi
+	show_cursor_ansi  db 		27, "[?25h"
+	.len        	  equ		$ - show_cursor_ansi
 	direction_up	  equ     0
 	direction_down	  equ     1
 	direction_left	  equ     2
 	direction_right	  equ     3
 
+
 section .bss
 	queue           resw    len
 	queue_head      resw    1
 	queue_count     resw    1
+	saved_termios   resb    44
+	termios    		resb   	44
+	key_buffer    	resb    1
+	direction		resb	1
+
 
 section .text
     global _start
+
 
 _start:
 	mov word [rel queue], 160
@@ -37,7 +47,10 @@ _start:
 	mov word [rel queue_head], 0
 	mov word [rel queue_count], 4
 
+	mov byte [rel direction], 3
+
 	call hide_cursor
+	call setup_term
 
 .loop:
     call display
@@ -48,14 +61,10 @@ _start:
 	xor     esi, esi
 	syscall
 
-	mov rsi, direction_right
+	call read_char
 	call move
 
 	jmp .loop
-
-	mov     rax, 60
-	mov     rdi, 0
-	syscall
 
 
 ; isEmpty
@@ -327,43 +336,187 @@ hide_cursor:
     ret
 
 
+; show_cursor
+; Purpose: Shows terminal coursor.
+; Arguments: None
+; Returns: RAX = number of bytes written, or a negative error code.
+; Clobbers: RAX, RDI, RDX, RFLAGS.
+show_cursor:
+    mov eax, 1
+    mov edi, 1
+    lea rsi, [rel show_cursor_ansi]
+    mov edx, show_cursor_ansi.len
+    syscall
+    ret
+
+
 ; move
 ; Purpose: Moves the snake queue. 
-; Arguments: RSI = direction [0 | 1 | 2 | 3]
+; Arguments: direction [0 | 1 | 2 | 3]
 ; Returns: None
 ; Clobbers: RAX, RDI, RCX, RSI, RFLAGS.
 move:
 	call first
 	mov rdi, rax
 
-	cmp rsi, direction_up
+	cmp [rel direction], direction_up
 	je .up
-	cmp rsi, direction_down
+	cmp [rel direction], direction_down
 	je .down
-	cmp rsi, direction_left
+	cmp [rel direction], direction_left
 	je .left
-	cmp rsi, direction_right
+	cmp [rel direction], direction_right
 	je .right
 
 	ret
 
 .up:
 	sub rdi, board_width
-	jmp .end
+	jmp .done
 
 .down:
 	add rdi, board_width
-	jmp .end
+	jmp .done
 
 .left:
 	dec rdi
-	jmp .end
+	jmp .done
 
 .right:
 	inc rdi
-	jmp .end
+	jmp .done
 
-.end:
+.done:
 	call enqueue
 	call dequeue
 	ret
+
+
+; setup_term
+; Purpose: Saves and changes terminal settings through ioctl
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RDI, RDX, RCX, RSI, RFLAGS.
+setup_term:
+    ; ioctl(0, TCGETS, &saved)
+	mov     eax, 16
+	xor     edi, edi
+	mov     esi, 0x5401
+	lea     rdx, [rel saved_termios]
+	syscall
+
+    ; if returned >0 than error
+	test    rax, rax
+	js      quit
+
+    ; copy old settings
+	lea     rsi, [rel saved_termios]
+	lea     rdi, [rel termios]
+	mov     ecx, 44
+	cld
+	rep     movsb
+
+    ; Wyłącz ICANON i echo (flaga w c_lflag, offset 12)
+	and     dword [rel termios + 12], 0xFFFFFFF5
+
+	mov     byte [rel termios + 23], 0				; VMIN = 0
+	mov     byte [rel termios + 22], 0				; VTIME = 0
+
+    ; ioctl(0, TCSETS, &term)
+	mov     eax, 16
+	xor     edi, edi
+	mov     esi, 0x5402
+	lea     rdx, [rel termios]
+	syscall
+
+    ; jeśli zwróciło mniej niż 0 to błąd
+	test    rax, rax
+	js      quit
+
+	ret
+
+
+; read_char
+; Purpose: Reads last character from stdin.
+; Arguments: None
+; Returns: direction
+; Clobbers: RAX, RDI, RDX, RSI, RFLAGS.
+read_char:
+	mov     byte [rel key_buffer], 0
+
+.drain:
+	xor     eax, eax
+	xor     edi, edi
+	lea     rsi, [rel key_buffer]
+	mov     edx, 1
+	syscall
+
+	test    rax, rax
+	jle     .process
+
+    ; another character may be available
+	jmp     .drain
+
+.process:
+	cmp     byte [rel key_buffer], 0
+	je		.done
+
+	cmp     byte [rel key_buffer], 0x1B
+	je      quit
+
+	cmp     byte [rel key_buffer], 0x7F
+	je      quit
+
+	cmp     byte [rel key_buffer], 0x77
+	je      .up
+
+	cmp     byte [rel key_buffer], 0x73
+	je      .down
+
+	cmp     byte [rel key_buffer], 0x61
+	je      .left
+
+	cmp     byte [rel key_buffer], 0x64
+	je      .right
+
+	jmp .done
+
+.up:
+	mov byte [rel direction], direction_up
+	jmp .done
+
+.down:
+	mov byte [rel direction], direction_down
+	jmp .done
+
+.left:
+	mov byte [rel direction], direction_left
+	jmp .done
+
+.right:
+	mov byte [rel direction], direction_right
+	jmp .done
+
+.done:
+	ret
+
+
+; quit
+; Purpose: Restores terminal settings and exits.
+; Arguments: None
+; Returns: None, exits program
+; Clobbers: RAX, RDI, RDX, RFLAGS.
+quit:
+	mov     eax, 16
+	xor     edi, edi
+	mov     esi, 0x5402
+	lea     rdx, [rel saved_termios]
+	syscall
+
+	call show_cursor
+
+	call clear_screen
+
+	mov     rax, 60
+	mov     rdi, 0
+	syscall
