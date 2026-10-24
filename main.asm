@@ -64,6 +64,7 @@ _start:
 	syscall
 
 	call read_char
+	mov rdi, rax
 	call move
 
 	jmp .loop
@@ -356,49 +357,84 @@ show_cursor:
 
 ; move
 ; Purpose: Moves the snake queue. 
-; Arguments: direction [0 | 1 | 2 | 3]
+; Arguments: RDI = direction [0 | 1 | 2 | 3]
 ; Returns: None
 ; Clobbers: RAX, RDI, RCX, RSI, RFLAGS.
 move:
-	call first
-	mov rdi, rax
+    mov r12b, dil
 
-	cmp [rel direction], direction_up
-	je .up
-	cmp [rel direction], direction_down
-	je .down
-	cmp [rel direction], direction_left
-	je .left
-	cmp [rel direction], direction_right
-	je .right
+    mov al, [rel direction]
 
-	ret
+    cmp r12b, direction_up
+    jne .check_down
+    cmp al, direction_down
+    je .keep_old
+
+.check_down:
+    cmp r12b, direction_down
+    jne .check_left
+    cmp al, direction_up
+    je .keep_old
+
+.check_left:
+    cmp r12b, direction_left
+    jne .check_right
+    cmp al, direction_right
+    je .keep_old
+
+.check_right:
+    cmp r12b, direction_right
+    jne .move_snake
+    cmp al, direction_left
+    je .keep_old
+
+.move_snake:
+    mov [rel direction], r12b
+    mov r12b, [rel direction]
+    jmp .calculate
+
+.keep_old:
+    mov r12b, [rel direction]
+
+.calculate:
+    call first
+    mov rdi, rax
+
+    cmp r12b, direction_up
+    je .up
+    cmp r12b, direction_down
+    je .down
+    cmp r12b, direction_left
+    je .left
+    cmp r12b, direction_right
+    je .right
+
+    ret
 
 .up:
-	sub rdi, board_width
-	jmp .done
+    sub rdi, board_width
+    jmp .done
 
 .down:
-	add rdi, board_width
-	jmp .done
+    add rdi, board_width
+    jmp .done
 
 .left:
-	dec rdi
-	jmp .done
+    dec rdi
+    jmp .done
 
 .right:
-	inc rdi
-	jmp .done
+    inc rdi
+    jmp .done
 
 .done:
-	call enqueue
-	test rax, rax
+    call enqueue
+    test rax, rax
     jnz .return
-	
-	call dequeue
+    call dequeue
 
 .return:
-	ret
+    ret
 
 
 ; setup_term
@@ -416,7 +452,7 @@ setup_term:
 	lea     rdx, [rel saved_termios]
 	syscall
 
-    ; if returned >0 than error
+	; if returned < 0, an error occurred
 	test    rax, rax
 	js      quit
 
@@ -442,7 +478,7 @@ setup_term:
 	lea     rdx, [rel termios]
 	syscall
 
-    ; jeśli zwróciło mniej niż 0 to błąd
+	; if returned < 0, an error occurred
 	test    rax, rax
 	js      quit
 
@@ -452,7 +488,7 @@ setup_term:
 ; read_char
 ; Purpose: Reads last character from stdin.
 ; Arguments: None
-; Returns: direction
+; Returns: RAX = direction [0 | 1 | 2 | 3]
 ; Clobbers: RAX, RDI, RDX, RSI, RFLAGS.
 read_char:
 	mov     byte [rel key_buffer], 0
@@ -471,6 +507,8 @@ read_char:
 	jmp     .drain
 
 .process:
+ 	mov al, [rel direction]
+
 	cmp     byte [rel key_buffer], 0
 	je		.done
 
@@ -498,19 +536,19 @@ read_char:
 	jmp .done
 
 .up:
-	mov byte [rel direction], direction_up
+	mov byte al, direction_up
 	jmp .done
 
 .down:
-	mov byte [rel direction], direction_down
+	mov byte al, direction_down
 	jmp .done
 
 .left:
-	mov byte [rel direction], direction_left
+	mov byte al, direction_left
 	jmp .done
 
 .right:
-	mov byte [rel direction], direction_right
+	mov byte al, direction_right
 	jmp .done
 
 .done:
