@@ -25,13 +25,15 @@ section .data
 
 
 section .bss
-	queue           resw    len
-	queue_head      resw    1
-	queue_count     resw    1
-	saved_termios   resb    44
-	termios    		resb   	44
-	key_buffer    	resb    1
-	direction		resb	1
+	queue             resw    len
+	queue_head        resw    1
+	queue_count       resw    1
+	saved_termios     resb    44
+	termios    		  resb	  44
+	was_termios_saved resb	  1
+	key_buffer    	  resb    1
+	direction		  resb	  1
+	signal_action	  resb	  32
 
 
 section .text
@@ -49,8 +51,8 @@ _start:
 
 	mov byte [rel direction], 3
 
-	call hide_cursor
 	call setup_term
+	call setup_signals
 
 .loop:
     call display
@@ -246,6 +248,7 @@ isPresent:
 ; Clobbers: RAX, RCX, RDX, RSI, RDI, R12.
 display:
 	call clear_screen
+	push r12
 	xor r12d, r12d
 
 .loop:
@@ -292,6 +295,7 @@ display:
     jmp .loop
 
 .done:
+	pop r12
     ret
 
 
@@ -388,7 +392,12 @@ move:
 
 .done:
 	call enqueue
+	test rax, rax
+    jnz .return
+	
 	call dequeue
+
+.return:
 	ret
 
 
@@ -398,6 +407,8 @@ move:
 ; Returns: None
 ; Clobbers: RAX, RDI, RDX, RCX, RSI, RFLAGS.
 setup_term:
+	call hide_cursor
+
     ; ioctl(0, TCGETS, &saved)
 	mov     eax, 16
 	xor     edi, edi
@@ -408,6 +419,8 @@ setup_term:
     ; if returned >0 than error
 	test    rax, rax
 	js      quit
+
+	mov byte [rel was_termios_saved], 1
 
     ; copy old settings
 	lea     rsi, [rel saved_termios]
@@ -463,8 +476,11 @@ read_char:
 
 	cmp     byte [rel key_buffer], 0x1B
 	je      quit
-
 	cmp     byte [rel key_buffer], 0x7F
+	je      quit
+	cmp     byte [rel key_buffer], 0x71
+	je      quit
+	cmp     byte [rel key_buffer], 0x51
 	je      quit
 
 	cmp     byte [rel key_buffer], 0x77
@@ -507,16 +523,73 @@ read_char:
 ; Returns: None, exits program
 ; Clobbers: RAX, RDI, RDX, RFLAGS.
 quit:
+	call show_cursor
+	call clear_screen
+
+	cmp byte [rel was_termios_saved], 1
+    jne .exit
+
 	mov     eax, 16
 	xor     edi, edi
 	mov     esi, 0x5402
 	lea     rdx, [rel saved_termios]
 	syscall
 
-	call show_cursor
-
-	call clear_screen
-
+.exit:
 	mov     rax, 60
 	mov     rdi, 0
 	syscall
+
+
+; setup_signals
+; Purpose: Registers SIGINT, SIGTERM and SIGHUP signals.
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RDI, RSI, RDX, R10, RFLAGS.
+setup_signals:
+    ; struct kernel_sigaction:
+    ; handler  offset 0
+    ; flags    offset 8
+    ; restorer offset 16
+    ; mask     offset 24
+
+    mov qword [rel signal_action + 0], quit
+    mov qword [rel signal_action + 8], 0x04000000 ; SA_RESTORER
+    mov qword [rel signal_action + 16], signal_restorer
+    mov qword [rel signal_action + 24], 0
+
+    ; SIGINT = 2
+    mov eax, 13
+    mov edi, 2
+    lea rsi, [rel signal_action]
+    xor edx, edx
+    mov r10d, 8
+    syscall
+
+    ; SIGTERM = 15
+    mov eax, 13
+    mov edi, 15
+    lea rsi, [rel signal_action]
+    xor edx, edx
+    mov r10d, 8
+    syscall
+
+    ; SIGHUP = 1
+    mov eax, 13
+    mov edi, 1
+    lea rsi, [rel signal_action]
+    xor edx, edx
+    mov r10d, 8
+    syscall
+
+    ret
+
+
+; signal_restorer
+; Purpose: Restores signals.
+; Arguments: None
+; Returns: None
+; Clobbers: RAX, RCX, RFLAGS.
+signal_restorer:
+    mov eax, 15          ; rt_sigreturn
+    syscall
