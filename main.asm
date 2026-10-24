@@ -842,7 +842,7 @@ get_board_padding:
 
 
 ; print_spaces
-; Purpose: Print given number of spaces as padding.
+; Purpose: Prints given number of spaces as padding.
 ; Arguments: RDI = number of spaces (0–300)
 ; Returns: None
 ; Clobbers: RAX, RDI, RSI, RDX, RFLAGS
@@ -861,6 +861,10 @@ print_spaces:
 
 
 ; print_border
+; Purpose: Prints line of border chars.
+; Arguments: RDI = number of chars to print
+; Returns: None
+; Clobbers: RAX, RCX, RDI, RSI
 print_border:
     mov rcx, rdi
     lea rsi, [rel border_top_tile]
