@@ -520,14 +520,17 @@ place_apple:
     jnc place_apple
 	
 	xor edx, edx
-	mov ecx, 1250
+	mov ecx, len
 	div rcx
 
+	push rdx
 	mov rdi, rdx
 	call isPresent
 	test rax, rax
 	jnz place_apple
+	pop rdx
 
+cont:
 	mov [rel apple], rdx
     ret
 
