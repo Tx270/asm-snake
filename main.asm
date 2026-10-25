@@ -667,8 +667,9 @@ setup_term:
 ; Returns: RAX = direction [0 | 1 | 2 | 3]
 ; Clobbers: RAX, RBX, RDI, RDX, RSI, RFLAGS.
 read_char:
-    mov al, [rel direction]
-    mov [rel key_buffer], al
+    push rbx
+
+    mov byte [rel key_buffer], 0
 
 .read_loop:
     xor eax, eax
@@ -677,24 +678,23 @@ read_char:
     mov edx, 1
     syscall
 
-    ; Brak dostępnych danych — zachowaj stan parsera
     test rax, rax
     jle .done
 
     mov al, [rel key_buffer]
     mov bl, [rel esc_state]
 
-    ; Stan 0: zwykły znak lub początek sekwencji ESC
     test bl, bl
     jnz .escape_sequence
 
     cmp al, 27
     je .start_escape
 
+.process_char:
     cmp al, 'q'
-    je quit
+    je .quit
     cmp al, 'Q'
-    je quit
+    je .quit
 
     cmp al, 'w'
     je .up
@@ -712,18 +712,20 @@ read_char:
     jmp .read_loop
 
 .escape_sequence:
-    ; Stan 1: po ESC oczekujemy '['
     cmp bl, 1
     jne .arrow_key
 
     cmp al, '['
-    jne quit
+    jne .reset_escape
 
     mov byte [rel esc_state], 2
     jmp .read_loop
 
+.reset_escape:
+    mov byte [rel esc_state], 0
+    jmp .process_char
+
 .arrow_key:
-    ; Stan 2: rozpoznaj końcowy znak strzałki
     mov byte [rel esc_state], 0
 
     cmp al, 'A'
@@ -739,23 +741,30 @@ read_char:
 
 .up:
     mov al, direction_up
-    ret
+    jmp .return
 
 .down:
     mov al, direction_down
-    ret
+    jmp .return
 
 .left:
     mov al, direction_left
-    ret
+    jmp .return
 
 .right:
     mov al, direction_right
-    ret
+    jmp .return
 
 .done:
     mov al, [rel direction]
+
+.return:
+    pop rbx
     ret
+
+.quit:
+    pop rbx
+    jmp quit
 
 
 ; quit
