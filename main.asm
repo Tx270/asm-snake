@@ -10,7 +10,6 @@ section .data
 	apple_tile:         db      "$"
 	border_tile:        db      "|"
 	border_top_tile:    db      "="
-	spaces_buffer_len   equ	  	300
 	display_buffer_len  equ	  	8192
 
 	queue_len         	equ     board_width * board_height
@@ -41,8 +40,8 @@ section .bss
 	signal_action	  resb	  32
 	apple 			  resw	  1
 	winsize 		  resb 	  8
-    spaces_buffer 	  resb	  spaces_buffer_len
 	display_buffer	  resb	  display_buffer_len
+    esc_state         resb    1
 
 
 %macro APPEND_CHAR 1
@@ -666,70 +665,97 @@ setup_term:
 ; Purpose: Reads last character from stdin.
 ; Arguments: None
 ; Returns: RAX = direction [0 | 1 | 2 | 3]
-; Clobbers: RAX, RDI, RDX, RSI, RFLAGS.
+; Clobbers: RAX, RBX, RDI, RDX, RSI, RFLAGS.
 read_char:
-	mov     byte [rel key_buffer], 0
+    mov al, [rel direction]
+    mov [rel key_buffer], al
 
-.drain:
-	xor     eax, eax
-	xor     edi, edi
-	lea     rsi, [rel key_buffer]
-	mov     edx, 1
-	syscall
+.read_loop:
+    xor eax, eax
+    xor edi, edi
+    lea rsi, [rel key_buffer]
+    mov edx, 1
+    syscall
 
-	test    rax, rax
-	jle     .process
+    ; Brak dostępnych danych — zachowaj stan parsera
+    test rax, rax
+    jle .done
 
-    ; another character may be available
-	jmp     .drain
+    mov al, [rel key_buffer]
+    mov bl, [rel esc_state]
 
-.process:
- 	mov al, [rel direction]
+    ; Stan 0: zwykły znak lub początek sekwencji ESC
+    test bl, bl
+    jnz .escape_sequence
 
-	cmp     byte [rel key_buffer], 0
-	je		.done
+    cmp al, 27
+    je .start_escape
 
-	cmp     byte [rel key_buffer], 0x1B
-	je      quit
-	cmp     byte [rel key_buffer], 0x7F
-	je      quit
-	cmp     byte [rel key_buffer], 0x71
-	je      quit
-	cmp     byte [rel key_buffer], 0x51
-	je      quit
+    cmp al, 'q'
+    je quit
+    cmp al, 'Q'
+    je quit
 
-	cmp     byte [rel key_buffer], 0x77
-	je      .up
+    cmp al, 'w'
+    je .up
+    cmp al, 's'
+    je .down
+    cmp al, 'a'
+    je .left
+    cmp al, 'd'
+    je .right
 
-	cmp     byte [rel key_buffer], 0x73
-	je      .down
+    jmp .read_loop
 
-	cmp     byte [rel key_buffer], 0x61
-	je      .left
+.start_escape:
+    mov byte [rel esc_state], 1
+    jmp .read_loop
 
-	cmp     byte [rel key_buffer], 0x64
-	je      .right
+.escape_sequence:
+    ; Stan 1: po ESC oczekujemy '['
+    cmp bl, 1
+    jne .arrow_key
 
-	jmp .done
+    cmp al, '['
+    jne quit
+
+    mov byte [rel esc_state], 2
+    jmp .read_loop
+
+.arrow_key:
+    ; Stan 2: rozpoznaj końcowy znak strzałki
+    mov byte [rel esc_state], 0
+
+    cmp al, 'A'
+    je .up
+    cmp al, 'B'
+    je .down
+    cmp al, 'D'
+    je .left
+    cmp al, 'C'
+    je .right
+
+    jmp .read_loop
 
 .up:
-	mov byte al, direction_up
-	jmp .done
+    mov al, direction_up
+    ret
 
 .down:
-	mov byte al, direction_down
-	jmp .done
+    mov al, direction_down
+    ret
 
 .left:
-	mov byte al, direction_left
-	jmp .done
+    mov al, direction_left
+    ret
 
 .right:
-	mov byte al, direction_right
-	jmp .done
+    mov al, direction_right
+    ret
 
 .done:
-	ret
+    mov al, [rel direction]
+    ret
 
 
 ; quit

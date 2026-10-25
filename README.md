@@ -4,7 +4,7 @@ A simple Snake CLI game written in x86-64 assembly (NASM) for Linux.
 
 ## Controls
 
-- `WSAD` - movment
+- `WSAD` or arrows - movment
 - `q` or `Esc` - quit
 
 ## Building
