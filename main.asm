@@ -2,7 +2,7 @@ bits 64
 
 
 section .data
-	board_width:        equ     30
+	board_width:        equ     35
 	board_height:       equ     15
 	background_tile:    db      " "
 	head_tile:          db      "@"
@@ -13,7 +13,6 @@ section .data
 	display_buffer_len  equ	  	8192
 
 	queue_len         	equ     board_width * board_height
-	new_line:         	db      10
 	sleep_time: 	  	dq      0 
 					  	dq      250000000
 	clear_screen_ansi 	db      27, "[2J", 27, "[H"
@@ -42,6 +41,9 @@ section .bss
 	winsize 		  resb 	  8
 	display_buffer	  resb	  display_buffer_len
     esc_state         resb    1
+    num_buffer        resb    20
+    best_score        resw    1
+    deaths            resw    1
 
 
 %macro APPEND_CHAR 1
@@ -71,12 +73,40 @@ section .bss
     mov r15, rdi
 %endmacro
 
+%macro APPEND_STRING 1
+    jmp %%skip
+    %%str: db %1
+    %%len equ $ - %%str
+    %%skip:
+    lea rsi, [rel %%str]
+    mov rdi, r15
+    mov rcx, %%len
+    rep movsb
+    mov r15, rdi
+%endmacro
+
+%macro APPEND_MEM_STRING 2
+    lea rsi, [%1]
+    mov rdi, r15
+    mov rcx, %2
+    rep movsb
+    mov r15, rdi
+%endmacro
+
 
 section .text
     global _start
 
 _start:
 init:
+    mov ax, [rel queue_count]
+    sub ax, 4
+    cmp ax, [rel best_score]
+    jle .setup
+
+    mov word [rel best_score], ax
+
+.setup:
 	mov word [rel queue], 160
 	mov word [rel queue + 2], -1
 	mov word [rel queue + 4], -1
@@ -106,6 +136,11 @@ main_loop:
 	call move
 
 	jmp main_loop
+
+
+failed:
+    inc [rel deaths]
+    jmp init
 
 
 ; isEmpty
@@ -301,11 +336,34 @@ display:
 
 .pad_top:
     test rbx, rbx
-    jz .top_border
+    jz .text
 
     APPEND_CHAR 10
     dec rbx
     jmp .pad_top
+
+.text:
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING "Score: "
+
+    movzx eax, word [rel queue_count]
+    sub eax, 4
+    call uint_to_string
+    APPEND_MEM_STRING rsi, rdx
+
+    APPEND_STRING " / Best: "
+
+    movzx eax, word [rel best_score]
+    call uint_to_string
+    APPEND_MEM_STRING rsi, rdx
+    
+    APPEND_STRING " / Deaths: "
+
+    movzx eax, word [rel deaths]
+    call uint_to_string
+    APPEND_MEM_STRING rsi, rdx
+
+    APPEND_CHAR 10
 
 .top_border:
     APPEND_REPEAT ' ', r13
@@ -576,7 +634,7 @@ move:
     add rsp, 8
     pop r13
     pop r12
-    jmp quit
+    jmp failed
 
 .return:
     add rsp, 8
@@ -890,4 +948,28 @@ get_board_padding:
     ret
 
 .error:
+    ret
+
+
+; uint_to_string
+; Purpose: Converts unsigned int to str
+; Arguments: RAX = number
+; Returns: RSI = text addres, RDX = text lenght
+; Clobbers: RAX, RBX, RCX, RDX, RDI, R8
+uint_to_string:
+    lea rsi, [rel num_buffer + 20]
+    mov r8, rsi
+    mov ebx, 10
+
+.convert:
+    xor edx, edx
+    div rbx
+    add dl, '0'
+    dec rsi
+    mov [rsi], dl
+    test rax, rax
+    jnz .convert
+
+    mov rdx, r8
+    sub rdx, rsi
     ret
