@@ -330,7 +330,17 @@ display:
 
 	call clear_screen
 
-    call get_board_padding
+    mov edi, board_width
+    call get_horizontal_padding
+    mov r13, rax
+    
+    test rax, rax
+    js .error
+
+    mov edi, board_height
+    call get_vertical_padding
+    mov rbx, rax
+    
     test rax, rax
     js .error
 
@@ -903,17 +913,19 @@ signal_restorer:
     syscall
 
 
-; get_board_padding
-; Purpose: Gets terminal dimensions and calculates needed padding
-; Arguments: None
-; Returns: R13 = columns, RBX = rows, RAX = 0, negative error code on failure
-; Clobbers: RAX, RCX, RDX, RSI, RDI, R13, RBX
-get_board_padding:
+; get_vertical_padding
+; Purpose: Gets terminal dimensions and calculates vertical padding
+; Arguments: RDI = element height
+; Returns: RAX = calculated padding
+; Clobbers: RAX, RCX, RDX, RSI, RDI, R10
+get_horizontal_padding:
+    push rdi
     mov eax, 16             ; SYS_ioctl
     mov edi, 1              ; stdout
     mov esi, 0x5413         ; TIOCGWINSZ
     lea rdx, [rel winsize]
     syscall
+    pop rdi
 
     test rax, rax
     js .error
@@ -922,29 +934,53 @@ get_board_padding:
 	xor edx, edx
 	mov ecx, 2
 	div rcx
-	mov r13, rax
+	mov r10, rax
 
-	mov eax, board_width
+	mov eax, edi
 	xor edx, edx
 	mov ecx, 2
 	div rcx
 
-	sub r13, rax
+	sub r10, rax
+
+    mov rax, r10
+    ret
+
+.error:
+    ret
+
+
+; get_horizontal_padding
+; Purpose: Gets terminal dimensions and calculates horizontal padding
+; Arguments: RDI = element width
+; Returns: RAX = calculated padding
+; Clobbers: RAX, RCX, RDX, RSI, RDI, R10
+get_vertical_padding:
+    push rdi
+    mov eax, 16             ; SYS_ioctl
+    mov edi, 1              ; stdout
+    mov esi, 0x5413         ; TIOCGWINSZ
+    lea rdx, [rel winsize]
+    syscall
+    pop rdi
+
+    test rax, rax
+    js .error
 
     movzx eax, word [rel winsize]
 	xor edx, edx
 	mov ecx, 2
 	div rcx
-	mov rbx, rax
+	mov r10, rax
 
-	mov eax, board_height
+	mov eax, edi
 	xor edx, edx
 	mov ecx, 2
 	div rcx
 
-	sub rbx, rax
+	sub r10, rax
 
-    xor eax, eax
+    mov rax, r10
     ret
 
 .error:
