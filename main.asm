@@ -15,6 +15,8 @@ section .data
 	queue_len         	equ     board_width * board_height
 	sleep_time: 	  	dq      0 
 					  	dq      250000000
+    endscreen_time: 	dq      2 
+					  	dq      0
 	clear_screen_ansi 	db      27, "[2J", 27, "[H"
 	.len              	equ     $ - clear_screen_ansi
 	hide_cursor_ansi  	db 	  	27, "[?25l"
@@ -98,16 +100,16 @@ section .text
     global _start
 
 _start:
+	call setup_term
+	call setup_signals
+
 init:
-    mov ax, [rel queue_count]
-    sub ax, 4
-    cmp ax, [rel best_score]
-    jle .setup
+    mov ax, queue_len
+    xor edx, edx
+    mov ecx, 2
+    div ecx
 
-    mov word [rel best_score], ax
-
-.setup:
-	mov word [rel queue], 160
+	mov word [rel queue], ax
 	mov word [rel queue + 2], -1
 	mov word [rel queue + 4], -1
 	mov word [rel queue + 6], -1
@@ -115,10 +117,8 @@ init:
 	mov word [rel queue_head], 0
 	mov word [rel queue_count], 4
 
-	mov byte [rel direction], 0
+	mov byte [rel direction], -1
 
-	call setup_term
-	call setup_signals
 	call place_apple
 
 main_loop:
@@ -139,7 +139,75 @@ main_loop:
 
 
 failed:
-    inc [rel deaths]
+    inc word [rel deaths]
+
+    mov ax, [rel queue_count]
+    sub ax, 4
+    cmp ax, [rel best_score]
+    jle .endscreen
+
+    mov word [rel best_score], ax
+
+.endscreen:
+    call clear_screen
+
+    lea r14, [rel display_buffer]
+    mov r15, r14
+
+    mov edi, 58
+    call get_horizontal_padding
+    mov r13, rax
+    
+    test rax, rax
+    js quit
+
+    mov edi, 9
+    call get_vertical_padding
+    mov rbx, rax
+
+    test rax, rax
+    js quit
+
+.pad_top:
+    test rbx, rbx
+    jz .draw
+
+    APPEND_CHAR 10
+    dec rbx
+    jmp .pad_top
+
+.draw:
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING " ####   ##   #   #  ######      ###   #   #  ###### ##### "
+    APPEND_CHAR 10
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING "#      #  #  ## ##  #          #   #  #   #  #      #   # "
+    APPEND_CHAR 10
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING "#  ### ##### # # #  #####      #   #  #   #  #####  ##### "
+    APPEND_CHAR 10
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING "#   #  #  #  #   #  #          #   #   # #   #      #  #  "
+    APPEND_CHAR 10
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING " ####  #  #  #   #  ######      ###     #    ###### #   # "
+    APPEND_CHAR 10
+    APPEND_CHAR 10
+    APPEND_CHAR 10
+    APPEND_REPEAT ' ', r13
+    APPEND_STRING "                         Score: "
+    mov ax, [rel queue_count]
+    sub ax, 4
+    call uint_to_string
+    APPEND_MEM_STRING rsi, rdx
+
+    call print_display_buffer
+
+    mov     eax, 35
+	lea     rdi, [rel endscreen_time]
+	xor     esi, esi
+	syscall
+
     jmp init
 
 
@@ -448,6 +516,22 @@ display:
     APPEND_REPEAT_MEM border_top_tile, board_width + 2
     APPEND_CHAR 10
 
+    call print_display_buffer
+
+    jmp .done
+
+.error:
+	jmp quit
+
+.done:
+    ret
+
+
+; print_display_buffer
+; Arguments: R14 = buffer beggining, R15 = buffer end pointer
+; Returns: RAX = number of bytes written, or a negative error code.
+; Clobbers: RAX, RDI, RDX, r14, r15, RFLAGS.
+print_display_buffer:
 	; num of bytes = end pointer - beggining
     mov rdx, r15
     sub rdx, r14
@@ -457,12 +541,6 @@ display:
     mov rsi, r14
     syscall
 
-    jmp .done
-
-.error:
-	jmp quit
-
-.done:
     ret
 
 
@@ -676,7 +754,7 @@ place_apple:
     test rax, rax
     jnz .retry
 
-    mov [rel apple], r12
+    mov [rel apple], r12w
     pop r12
     ret
 
@@ -736,8 +814,9 @@ setup_term:
 ; Clobbers: RAX, RBX, RDI, RDX, RSI, RFLAGS.
 read_char:
     push rbx
+    push r12
 
-    mov byte [rel key_buffer], 0
+    mov  r12d, -1
 
 .read_loop:
     xor eax, eax
@@ -749,10 +828,10 @@ read_char:
     test rax, rax
     jle .done
 
-    mov al, [rel key_buffer]
-    mov bl, [rel esc_state]
+    movzx eax, byte [rel key_buffer]
+    movzx ebx, byte [rel esc_state]
 
-    test bl, bl
+    test ebx, ebx
     jnz .escape_sequence
 
     cmp al, 27
@@ -763,7 +842,6 @@ read_char:
     je .quit
     cmp al, 'Q'
     je .quit
-
     cmp al, 'w'
     je .up
     cmp al, 's'
@@ -772,7 +850,6 @@ read_char:
     je .left
     cmp al, 'd'
     je .right
-
     jmp .read_loop
 
 .start_escape:
@@ -780,12 +857,10 @@ read_char:
     jmp .read_loop
 
 .escape_sequence:
-    cmp bl, 1
+    cmp ebx, 1
     jne .arrow_key
-
     cmp al, '['
     jne .reset_escape
-
     mov byte [rel esc_state], 2
     jmp .read_loop
 
@@ -808,29 +883,34 @@ read_char:
     jmp .read_loop
 
 .up:
-    mov al, direction_up
-    jmp .return
+    mov r12d, direction_up
+    jmp .read_loop
 
 .down:
-    mov al, direction_down
-    jmp .return
+    mov r12d, direction_down
+    jmp .read_loop
 
 .left:
-    mov al, direction_left
-    jmp .return
+    mov r12d, direction_left
+    jmp .read_loop
 
 .right:
-    mov al, direction_right
-    jmp .return
+    mov r12d, direction_right
+    jmp .read_loop
 
 .done:
-    mov al, [rel direction]
+    mov eax, r12d
+    cmp eax, -1
+    jne .return
+    movzx eax, byte [rel direction]
 
 .return:
+    pop r12
     pop rbx
     ret
 
 .quit:
+    pop r12
     pop rbx
     jmp quit
 
@@ -913,9 +993,9 @@ signal_restorer:
     syscall
 
 
-; get_vertical_padding
-; Purpose: Gets terminal dimensions and calculates vertical padding
-; Arguments: RDI = element height
+; get_horizontal_padding
+; Purpose: Gets terminal dimensions and calculates horizontal padding
+; Arguments: RDI = element width
 ; Returns: RAX = calculated padding
 ; Clobbers: RAX, RCX, RDX, RSI, RDI, R10
 get_horizontal_padding:
@@ -950,9 +1030,9 @@ get_horizontal_padding:
     ret
 
 
-; get_horizontal_padding
-; Purpose: Gets terminal dimensions and calculates horizontal padding
-; Arguments: RDI = element width
+; get_vertical_padding
+; Purpose: Gets terminal dimensions and calculates vertical padding
+; Arguments: RDI = element height
 ; Returns: RAX = calculated padding
 ; Clobbers: RAX, RCX, RDX, RSI, RDI, R10
 get_vertical_padding:
